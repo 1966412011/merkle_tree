@@ -1,0 +1,14 @@
+[package]
+name = "merkle_tree"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+
+[dependencies]
+ark-ff = "0.4"
+poseidon-rs = "0.0.10"
+ff = {package="ff_ce" , version="0.11", features = ["derive"]}
+sha2 = "0.10"
+anyhow = "1.0"
