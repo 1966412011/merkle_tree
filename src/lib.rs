@@ -14,10 +14,10 @@ fn sha256_hash(msg: &[u8]) -> [u8; 32] {
 pub fn gen_poseidon_hash(msg: &[u8]) -> anyhow::Result<Fr> {
     let sha256 = sha256_hash(msg);
     let mut fr = Fr::zero();
-    let ten =
+    let n256 =
         Fr::from_str("256").ok_or_else(|| anyhow::anyhow!("gen_poseidon_hash parse error 1"))?;
     for v in sha256 {
-        fr.mul_assign(&ten);
+        fr.mul_assign(&n256);
         fr.add_assign(
             &Fr::from_str(&v.to_string())
                 .ok_or_else(|| anyhow::anyhow!("gen_poseidon_hash parse error 2"))?,

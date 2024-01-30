@@ -1,7 +1,8 @@
 use anyhow::anyhow;
-use ff::*;
 use poseidon_rs::Fr;
-use std::{collections::BTreeMap, usize, vec};
+use std::usize;
+
+use crate::{gen_poseidon_hash, gen_poseidon_hash_by_fr};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Proof {
@@ -13,109 +14,118 @@ pub struct Proof {
 }
 
 #[derive(Clone)]
-pub struct MerkleNode {
-    pub left: usize,
-    pub right: usize,
-    pub father: usize,
-    pub value: Fr,
-    pub range: (usize, usize),
-}
-
-#[derive(Clone)]
 pub struct MerkleTree {
-    root: usize,
-    size: usize,
-    counter: usize,
-    leaves: BTreeMap<usize, Proof>,
-    nodes: BTreeMap<usize, MerkleNode>,
+    data: Vec<Vec<Fr>>,
+    leaves: Vec<String>,
 }
 
 impl MerkleTree {
     pub fn new() -> Self {
-        let mut nodes = BTreeMap::new();
-        nodes.insert(
-            1,
-            MerkleNode {
-                left: 1,
-                right: 1,
-                father: 1,
-                value: Fr::zero(),
-                range: (1, 1),
-            },
-        );
-        let mut leaves = BTreeMap::new();
-        leaves.insert(
-            1,
-            Proof {
-                index: 1,
-                value: String::from(""),
-                siblings: Vec::new(),
-                root: String::from(""),
-                empty: true,
-            },
-        );
         MerkleTree {
-            root: 0,
-            counter: 1,
-            size: 1,
-            leaves,
-            nodes,
+            data: Vec::new(),
+            leaves: Vec::new(),
         }
     }
 
-    fn get_node(&self, index: usize) -> anyhow::Result<&MerkleNode> {
-        self.nodes
-            .get(&self.root)
-            .ok_or_else(|| anyhow!("root not find"))
+    fn get_height(&self) -> usize {
+        let mut tl = 1;
+        let mut height = 0;
+        while tl < self.leaves.len() {
+            tl = tl * 2;
+            height += 1;
+        }
+        height
     }
 
-    fn get_mut_node(&mut self, index: usize) -> anyhow::Result<&mut MerkleNode> {
-        self.nodes
-            .get_mut(&self.root)
-            .ok_or_else(|| anyhow!("root not find"))
-    }
-
-    fn gen_new_node(&mut self, range: (usize, usize)) -> usize {
-        let node = MerkleNode {
-            left: 0,
-            right: 0,
-            father: 0,
-            value: Fr::zero(),
-            range,
-        };
-        self.counter += 1;
-        let index = self.counter;
-        self.nodes.insert(index, node);
-        index
-    }
-
-    pub fn insert(&mut self, index: usize, value: String) -> anyhow::Result<()> {
-        loop {
-            let root = self.get_node(self.root)?.clone();
-            if root.range.1 >= index {
-                break;
+    fn update(&mut self, mut index: usize, value: String) -> anyhow::Result<()> {
+        let vfr = gen_poseidon_hash(value.as_bytes())?;
+        self.leaves[index] = value;
+        let height = self.get_height();
+        for i in 0..height {
+            if i == 0 {
+                self.data[i][index] = vfr;
+            } else {
+                let fr1 = self.data[i - 1][index * 2];
+                let fr2 = self.data[i - 1][index * 2 + 1];
+                let fr = gen_poseidon_hash_by_fr(vec![fr1, fr2])?;
+                self.data[i][index] = fr;
             }
-            let r1 = (root.range.0, root.range.1 * 2);
-            let r2 = (root.range.1 + 1, root.range.1 * 2);
-            let n1 = self.gen_new_node(r1);
-            let n2 = self.gen_new_node(r2);
-            {
-                let node = self.get_mut_node(n1)?;
+            index = index / 2;
+        }
+        Ok(())
+    }
+
+    fn push_node(&mut self, value: String) -> anyhow::Result<()> {
+        let vfr = gen_poseidon_hash(value.as_bytes())?;
+        self.leaves.push(value);
+        let height = self.get_height();
+        for i in 0..height {
+            if self.data.len() <= i {
+                self.data.push(Vec::new());
             }
-            self.root = n1;
+            if i == 0 {
+                self.data[i].push(vfr);
+            } else {
+                let tl = self.data[i].len();
+                let fr1 = self.data[i - 1][tl * 2];
+                let fr2 = self.data[i - 1][tl * 2 + 1];
+                let fr = gen_poseidon_hash_by_fr(vec![fr1, fr2])?;
+                self.data[i].push(fr);
+            }
         }
 
         Ok(())
     }
 
-    pub fn get_proof(&self, index: usize) -> Option<Proof> {
-        self.leaves.get(&index).cloned()
+    pub fn insert_leaf(&mut self, index: usize, value: String) -> anyhow::Result<()> {
+        if index == self.leaves.len() {
+            self.push_node(value)
+        } else if index < self.leaves.len() {
+            self.update(index, value)
+        } else {
+            Err(anyhow!("index out of range"))
+        }
+    }
+
+    pub fn get_proof(&self, mut index: usize) -> Option<Proof> {
+        if index >= self.leaves.len() {
+            return None;
+        }
+        let mut siblings = Vec::new();
+        let height = self.get_height();
+        for i in 0..height {
+            siblings.push(self.data[i][index].to_string());
+            index = index / 2;
+        }
+        Some(Proof {
+            index,
+            value: self.leaves[index].clone(),
+            siblings,
+            root: self.data[height - 1][0].to_string(),
+            empty: false,
+        })
     }
 
     pub fn verify(&self, proof: &Proof) -> bool {
-        self.leaves
-            .get(&proof.index)
-            .map(|v| v == proof)
+        self.get_proof(proof.index)
+            .map(|ref v| v == proof)
             .unwrap_or(false)
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_works() {
+        let mut tree = MerkleTree::new();
+        tree.insert_leaf(0, "hello".to_string()).unwrap();
+        tree.insert_leaf(1, "world".to_string()).unwrap();
+        tree.insert_leaf(2, "hello world".to_string()).unwrap();
+        let proof = tree.get_proof(0).unwrap();
+        println!("proof: {:?}", proof);
+        assert!(tree.verify(&proof));
     }
 }
